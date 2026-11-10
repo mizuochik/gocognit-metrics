@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -48,11 +48,17 @@ func parse(r io.Reader) ([]entry, error) {
 	return entries, nil
 }
 
-func run(ctx context.Context, input, endpoint string) error {
-	f, err := os.Open(input)
-	if err != nil { return err }
-	defer f.Close()
-	entries, err := parse(f)
+func run(ctx context.Context, endpoint string) error {
+	cmd := exec.CommandContext(ctx, "gocognit", "-over", "-1", ".")
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("run gocognit: %w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return fmt.Errorf("run gocognit: %w", err)
+	}
+	entries, err := parse(strings.NewReader(string(output)))
 	if err != nil { return err }
 
 	exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(endpoint), otlpmetricgrpc.WithInsecure())
@@ -77,10 +83,9 @@ func run(ctx context.Context, input, endpoint string) error {
 }
 
 func main() {
-	input := flag.String("input", "gocognit.out", "path to gocognit output")
 	endpoint := flag.String("endpoint", "localhost:4317", "OTLP gRPC endpoint (host:port)")
 	flag.Parse()
-	if err := run(context.Background(), *input, *endpoint); err != nil {
+	if err := run(context.Background(), *endpoint); err != nil {
 		log.Fatal(err)
 	}
 }
