@@ -22,11 +22,8 @@ import (
 )
 
 type entry struct {
-	score     int64
-	packageName string
-	function  string
-	file      string
-	line      int64
+	score int64
+	file  string
 }
 
 func parse(r io.Reader) ([]entry, error) {
@@ -44,7 +41,7 @@ func parse(r io.Reader) ([]entry, error) {
 		if len(lineInfo) != 2 { return nil, fmt.Errorf("line %d: invalid location %q", n, fields[4]) }
 		line, err := strconv.ParseInt(lineInfo[0], 10, 64)
 		if err != nil { return nil, fmt.Errorf("line %d: invalid line number: %w", n, err) }
-		entries = append(entries, entry{score: score, packageName: fields[1], function: fields[2], file: fields[3], line: line})
+		entries = append(entries, entry{score: score, file: fields[3]})
 	}
 	if err := s.Err(); err != nil { return nil, err }
 	if len(entries) == 0 { return nil, errors.New("input contains no metrics") }
@@ -67,15 +64,12 @@ func run(ctx context.Context, input, endpoint string) error {
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 	instrument, err := provider.Meter("gocognit-metrics").Int64Gauge("gocognit.complexity", apiMetric.WithDescription("Cognitive complexity reported by gocognit"))
 	if err != nil { return fmt.Errorf("create metric instrument: %w", err) }
+	fileScores := make(map[string]int64)
 	for _, e := range entries {
-		instrument.Record(ctx, e.score,
-			apiMetric.WithAttributes(
-				attribute.String("code.package", e.packageName),
-				attribute.String("code.function", e.function),
-				attribute.String("code.filepath", e.file),
-				attribute.Int64("code.line", e.line),
-			),
-		)
+		fileScores[e.file] += e.score
+	}
+	for file, score := range fileScores {
+		instrument.Record(ctx, score, apiMetric.WithAttributes(attribute.String("code.filepath", file)))
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
